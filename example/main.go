@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/user/noise-go/noise"
+	"github.com/panda-coder/go-noise/noise"
 )
 
 func runServer() {

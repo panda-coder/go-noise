@@ -1,4 +1,4 @@
-module github.com/user/noise-go
+module github.com/panda-coder/go-noise
 
 go 1.24.10
 
