@@ -3,7 +3,6 @@ package sv2
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -14,26 +13,26 @@ import (
 )
 
 type KeyPair struct {
-	privateKey *ecdsa.PrivateKey
-	publicKey  []byte
+	privateKey     *ecdsa.PrivateKey
+	publicKey      []byte
+	ellswiftPubKey []byte
 }
 
 func GenerateKeyPair() (*KeyPair, error) {
-	p256k1 := ecc.P256k1()
-	privKey, err := ecdsa.GenerateKey(p256k1, rand.Reader)
+	ellswiftKp, err := GenerateEllSwiftKeyPair()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate private key: %w", err)
+		return nil, fmt.Errorf("failed to generate ellswift keypair: %w", err)
 	}
 
-	if privKey.D.Sign() == 0 || privKey.D.Cmp(p256k1.Params().N) >= 0 {
-		return nil, fmt.Errorf("invalid private key")
+	privKey, err := ParsePrivateKey(ellswiftKp.PrivateKeyBytes())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}
-
-	pubKeyBytes := serializePublicKeyXOnly(privKey.PublicKey)
 
 	return &KeyPair{
-		privateKey: privKey,
-		publicKey:  pubKeyBytes,
+		privateKey:     privKey,
+		publicKey:      ellswiftKp.XOnlyPublicKey(),
+		ellswiftPubKey: ellswiftKp.EllSwiftPublicKey(),
 	}, nil
 }
 
@@ -43,6 +42,10 @@ func (kp *KeyPair) PrivateKey() *ecdsa.PrivateKey {
 
 func (kp *KeyPair) PublicKey() []byte {
 	return kp.publicKey
+}
+
+func (kp *KeyPair) EllSwiftPublicKey() []byte {
+	return kp.ellswiftPubKey
 }
 
 func (kp *KeyPair) SerializePrivateKey() []byte {
@@ -70,16 +73,23 @@ func SerializePublicKey(pubKey *ecdsa.PublicKey) []byte {
 }
 
 func SignSchnorr(privKey *ecdsa.PrivateKey, messageHash []byte) ([]byte, error) {
-	sig, err := ecc.SignBytes(privKey, messageHash, ecc.LowerS)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign message: %w", err)
+	privKeyBytes := privKey.D.Bytes()
+	if len(privKeyBytes) < 32 {
+		padded := make([]byte, 32)
+		copy(padded[32-len(privKeyBytes):], privKeyBytes)
+		privKeyBytes = padded
 	}
 
-	return sig, nil
+	return SignSchnorrBIP340(privKeyBytes, messageHash)
 }
 
 func VerifySchnorr(pubKey *ecdsa.PublicKey, messageHash []byte, signature []byte) bool {
-	return ecc.VerifyBytes(pubKey, messageHash, signature, ecc.LowerS)
+	xOnlyBytes := serializePublicKeyXOnly(*pubKey)
+	result, err := VerifySchnorrBIP340(xOnlyBytes, messageHash, signature)
+	if err != nil {
+		return false
+	}
+	return result
 }
 
 func Sign(privKey *ecdsa.PrivateKey, message []byte) ([]byte, error) {
@@ -133,6 +143,18 @@ func V2ECDH(privKey *ecdsa.PrivateKey, remotePubKey []byte, isInitiator bool) ([
 	return result, nil
 }
 
+func V2ECDHEllSwift(kp *KeyPair, remoteEllSwift []byte, isInitiator bool) ([]byte, error) {
+	if len(remoteEllSwift) != 64 {
+		return nil, fmt.Errorf("invalid remote ellswift key length: expected 64, got %d", len(remoteEllSwift))
+	}
+
+	if len(kp.ellswiftPubKey) != 64 {
+		return nil, fmt.Errorf("local keypair does not have ellswift public key")
+	}
+
+	return V2ECDHWithEllSwift(kp.privateKey, kp.ellswiftPubKey, remoteEllSwift, isInitiator)
+}
+
 func taggedHashBIP324(a, b, c []byte) []byte {
 	tag := "bip324_ellswift_xonly_ecdh"
 	tagHash := sha256.Sum256([]byte(tag))
@@ -150,7 +172,7 @@ func taggedHashBIP324(a, b, c []byte) []byte {
 func deriveYCoordinate(x *big.Int, curve elliptic.Curve) *big.Int {
 	p := curve.Params().P
 	three := big.NewInt(3)
-	
+
 	xCubed := new(big.Int).Exp(x, three, p)
 	seven := big.NewInt(7)
 	ySq := new(big.Int).Add(xCubed, seven)
@@ -217,12 +239,12 @@ func Base58CheckEncode(version []byte, pubKey []byte) string {
 	}
 
 	payload := append(version, pubKey...)
-	
+
 	checksum := sha256.Sum256(payload)
 	checksum = sha256.Sum256(checksum[:])
-	
+
 	fullPayload := append(payload, checksum[:4]...)
-	
+
 	return base58Encode(fullPayload)
 }
 
@@ -258,7 +280,7 @@ const base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwx
 
 func base58Encode(input []byte) string {
 	var result []byte
-	
+
 	x := new(big.Int).SetBytes(input)
 	base := big.NewInt(58)
 	zero := big.NewInt(0)
