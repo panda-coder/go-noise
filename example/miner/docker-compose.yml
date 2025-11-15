@@ -1,0 +1,26 @@
+networks:
+  sv2-testing:
+    ipam:
+      config:
+      - subnet: 10.11.0.0/24
+
+services:
+  pool:
+    build:
+      context: .
+    ports:
+      - "2000:2000"
+    volumes:
+      - ./py-miner:/py-miner
+    networks:
+      sv2-testing:
+        ipv4_address: 10.11.0.2
+
+  miner:
+    build:
+      context: .
+    entrypoint: ["python", "miner.py"]
+
+    networks:
+      sv2-testing:
+        ipv4_address: 10.11.0.3

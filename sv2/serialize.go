@@ -26,8 +26,9 @@ func U24(v uint32) ([]byte, error) {
 	if v >= 1<<24 {
 		return nil, errors.New("U24: value overflow")
 	}
-	b := make([]byte, 3)
-	binary.LittleEndian.PutUint32(b[:4], v)
+	// Use a 4-byte buffer to safely write a 32-bit value, then return the first 3 bytes.
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, v)
 	return b[:3], nil
 }
 
