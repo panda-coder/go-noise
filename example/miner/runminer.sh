@@ -1,0 +1,1 @@
+./miner --host=localhost --port=2000 --worker=my-worker --hashrate=0.001
